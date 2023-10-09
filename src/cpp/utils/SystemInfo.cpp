@@ -26,11 +26,10 @@
 #include <sys/stat.h>
 #endif // _WIN32
 
-#include <chrono>
 #include <fstream>
-#include <iomanip>
 #include <string>
-#include <thread>
+#include <chrono>
+#include <iomanip>
 #include <time.h>
 
 #include <nlohmann/json.hpp>

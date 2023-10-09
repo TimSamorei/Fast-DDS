@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.16.3)
 
 project(SecureHelloWorldExample VERSION 1 LANGUAGES CXX)
 
 # Find requirements
 if(NOT fastcdr_FOUND)
-    find_package(fastcdr 2 REQUIRED)
+    find_package(fastcdr REQUIRED)
 endif()
 
 if(NOT foonathan_memory_FOUND)
@@ -26,7 +26,7 @@ if(NOT foonathan_memory_FOUND)
 endif()
 
 if(NOT fastrtps_FOUND)
-    find_package(fastrtps 2.12 REQUIRED)
+    find_package(fastrtps REQUIRED)
 endif()
 
 #Check C++11
@@ -42,6 +42,7 @@ message(STATUS "Configuring DDSSecureHelloWorld example...")
 file(GLOB DDS_SECURE_HELLOWORLD_EXAMPLE_SOURCES_CXX "*.cxx")
 file(GLOB DDS_SECURE_HELLOWORLD_EXAMPLE_SOURCES_CPP "*.cpp")
 
+find_package(json-c CONFIG REQUIRED)
 add_executable(DDSSecureHelloWorldExample ${DDS_SECURE_HELLOWORLD_EXAMPLE_SOURCES_CXX} ${DDS_SECURE_HELLOWORLD_EXAMPLE_SOURCES_CPP})
 target_compile_definitions(DDSSecureHelloWorldExample PRIVATE
     $<$<AND:$<NOT:$<BOOL:${WIN32}>>,$<STREQUAL:"${CMAKE_BUILD_TYPE}","Debug">>:__DEBUG>

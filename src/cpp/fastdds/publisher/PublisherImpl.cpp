@@ -206,18 +206,16 @@ DataWriterImpl* PublisherImpl::create_datawriter_impl(
         const TypeSupport& type,
         Topic* topic,
         const DataWriterQos& qos,
-        DataWriterListener* listener,
-        std::shared_ptr<fastrtps::rtps::IPayloadPool> payload_pool)
+        DataWriterListener* listener)
 {
-    return new DataWriterImpl(this, type, topic, qos, listener, payload_pool);
+    return new DataWriterImpl(this, type, topic, qos, listener);
 }
 
 DataWriter* PublisherImpl::create_datawriter(
         Topic* topic,
         const DataWriterQos& qos,
         DataWriterListener* listener,
-        const StatusMask& mask,
-        std::shared_ptr<fastrtps::rtps::IPayloadPool> payload_pool)
+        const StatusMask& mask)
 {
     EPROSIMA_LOG_INFO(PUBLISHER, "CREATING WRITER IN TOPIC: " << topic->get_name());
     //Look for the correct type registration
@@ -236,7 +234,7 @@ DataWriter* PublisherImpl::create_datawriter(
         return nullptr;
     }
 
-    DataWriterImpl* impl = create_datawriter_impl(type_support, topic, qos, listener, payload_pool);
+    DataWriterImpl* impl = create_datawriter_impl(type_support, topic, qos, listener);
     return create_datawriter(topic, impl, mask);
 }
 
@@ -271,8 +269,7 @@ DataWriter* PublisherImpl::create_datawriter_with_profile(
         Topic* topic,
         const std::string& profile_name,
         DataWriterListener* listener,
-        const StatusMask& mask,
-        std::shared_ptr<fastrtps::rtps::IPayloadPool> payload_pool)
+        const StatusMask& mask)
 {
     // TODO (ILG): Change when we have full XML support for DDS QoS profiles
     PublisherAttributes attr;
@@ -280,7 +277,7 @@ DataWriter* PublisherImpl::create_datawriter_with_profile(
     {
         DataWriterQos qos = default_datawriter_qos_;
         utils::set_qos_from_attributes(qos, attr);
-        return create_datawriter(topic, qos, listener, mask, payload_pool);
+        return create_datawriter(topic, qos, listener, mask);
     }
 
     return nullptr;

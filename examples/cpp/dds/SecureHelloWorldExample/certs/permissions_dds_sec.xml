@@ -7,6 +7,7 @@
                 <not_before>2013-06-01T13:00:00</not_before>
                 <not_after>2038-06-01T13:00:00</not_after>
             </validity>
+            <pcrs>thisisatest</pcrs>
             <allow_rule>
                 <domains>
                     <id_range>
@@ -28,6 +29,7 @@
                 <not_before>2013-06-01T13:00:00</not_before>
                 <not_after>2038-06-01T13:00:00</not_after>
             </validity>
+            <pcrs>justtanothertest</pcrs>
             <allow_rule>
                 <domains>
                     <id_range>

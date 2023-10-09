@@ -55,6 +55,15 @@
 #include <cassert>
 #include <algorithm>
 
+#include <tss2/tss2_fapi.h>
+#include <tss2/tss2_esys.h>
+
+#include <json-c/json.h>
+#include <json-c/json_util.h>
+#include <json-c/json_tokener.h>
+
+#include <cmath>
+
 #define S1(x) #x
 #define S2(x) S1(x)
 #define LOCATION " (" __FILE__ ":" S2(__LINE__) ")"
@@ -65,6 +74,15 @@ using namespace eprosima::fastrtps::rtps;
 using namespace eprosima::fastrtps::rtps::security;
 
 using ParameterList = eprosima::fastdds::dds::ParameterList;
+
+uint8_t *randomBytes_sub = NULL;
+uint8_t *randomBytes_pub = NULL;
+bool do_attestation = false;
+size_t  randBytesRequested = 32;
+std::string sig_key_string;
+std::string verify_key_string;
+std::string pcr_list;
+std::string pcr_num;
 
 static const unsigned char* BN_deserialize_raw(
         BIGNUM** bn,
@@ -1048,6 +1066,55 @@ ValidationResult_t PKIDH::validate_local_identity(
         password = &empty_password;
     }
 
+    PropertyPolicy tc_ra_properties = PropertyPolicyHelper::get_properties_with_prefix(participant_attr.properties,
+                    "dds.sec.auth.builtin.TC-RA.");
+    if (PropertyPolicyHelper::length(tc_ra_properties) == 0)
+    {
+        exception = _SecurityException_("Not found any dds.sec.auth.builtin.TC-RA property");
+        EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    std::string* sig_key_string_replace = PropertyPolicyHelper::find_property(tc_ra_properties, "sig_key");
+    if (sig_key_string_replace == nullptr)
+    {
+        exception = _SecurityException_("Not found dds.sec.auth.builtin.TC-RA.sig_key property");
+        EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+    
+    sig_key_string = *sig_key_string_replace;
+
+    std::string* verify_key_string_replace = PropertyPolicyHelper::find_property(tc_ra_properties, "verify_key");
+    if (verify_key_string_replace == nullptr)
+    {
+        exception = _SecurityException_("Not found dds.sec.auth.builtin.TC-RA.verify_key property");
+        EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    verify_key_string = *verify_key_string_replace;
+
+    std::string* pcr_list_replace = PropertyPolicyHelper::find_property(tc_ra_properties, "pcr_list");
+    if (pcr_list_replace == nullptr)
+    {
+        exception = _SecurityException_("Not found dds.sec.auth.builtin.TC-RA.pcr_list property");
+        EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    pcr_list = *pcr_list_replace;
+
+    std::string* pcr_num_replace = PropertyPolicyHelper::find_property(tc_ra_properties, "pcr_num");
+    if (pcr_num_replace == nullptr)
+    {
+        exception = _SecurityException_("Not found dds.sec.auth.builtin.TC-RA.pcr_num property");
+        EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+    
+    pcr_num = *pcr_num_replace;
+
     PKIIdentityHandle* ih = &PKIIdentityHandle::narrow(*get_identity_handle(exception));
 
     (*ih)->store_ = load_identity_ca(*identity_ca, (*ih)->there_are_crls_, (*ih)->sn, (*ih)->algo,
@@ -1166,6 +1233,7 @@ ValidationResult_t PKIDH::validate_remote_identity(
         (*rih)->cert_sn_ = ""; // cert_sn ? *cert_sn : "";
         (*rih)->algo = cert_algo ? *cert_algo : "";
         (*rih)->participant_key_ = remote_participant_key;
+        (*rih)->testtest = "blaaablaaa";
         *remote_identity_handle = rih;
 
         if (lih->participant_key_ < remote_participant_key )
@@ -1177,6 +1245,9 @@ ValidationResult_t PKIDH::validate_remote_identity(
             returnedValue = ValidationResult_t::VALIDATION_PENDING_HANDSHAKE_MESSAGE;
         }
     }
+
+
+    std::cout << "SHOULD BE LAST" << std::endl;
 
     return returnedValue;
 }
@@ -1270,6 +1341,65 @@ ValidationResult_t PKIDH::begin_handshake_request(
             lih->kagree_alg_.end());
     bproperty.propagate(true);
     (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+    // START ATTESTATION ------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    // Setting up TPM
+    FAPI_CONTEXT *fapi_context;
+    TSS2_RC r = 0;
+    
+    // Initializing TPM
+    r = Fapi_Initialize(&fapi_context, NULL);
+    if (r != TSS2_RC_SUCCESS) { 
+        WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_Initialize failed");
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    // Generating Random
+    r = Fapi_GetRandom(fapi_context, randBytesRequested, &randomBytes_sub);
+    if (r != TSS2_RC_SUCCESS) { 
+        WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_GetRandom failed");
+        Fapi_Finalize(&fapi_context);
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    // Concat Cert to generated Random
+    uint8_t * concat = new uint8_t[32 + lih->cert_content_->length];
+    std::copy(randomBytes_sub, randomBytes_sub + 32, concat);
+    std::copy(lih->cert_content_->data, lih->cert_content_->data + lih->cert_content_->length, concat + 32);
+
+    // Hash Concat to get new Random
+    if (!EVP_Digest(concat, 32 + lih->cert_content_->length, randomBytes_sub, NULL, EVP_sha256(), NULL))
+    {
+        exception = _SecurityException_("OpenSSL library cannot hash sha256");
+        EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+        return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    // Transfer Random
+    bproperty.name("c.randomBytes_sub");
+    bproperty.value().assign(randomBytes_sub,
+            randomBytes_sub + randBytesRequested);
+    bproperty.propagate(true);
+    (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+    // Transfer PCRS
+    bproperty.name("c.pcrs_sub");
+    bproperty.value().assign(pcr_list.begin(),
+            pcr_list.end());
+    bproperty.propagate(true);
+    (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+    bproperty.name("c.pcrs_num_sub");
+    bproperty.value().assign(pcr_num.begin(),
+            pcr_num.end());
+    bproperty.propagate(true);
+    (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+    std::cout << pcr_num << std::endl;
+
+    // Finalizing TPM
+    Fapi_Finalize(&fapi_context);
 
     // hash_c1
     CDRMessage_t message(static_cast<uint32_t>(BinaryPropertyHelper::serialized_size(
@@ -1520,6 +1650,178 @@ ValidationResult_t PKIDH::begin_handshake_reply(
         return ValidationResult_t::VALIDATION_FAILED;
     }
 
+    // ATTESTATION ------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //Setting up TPM and Quote
+    FAPI_CONTEXT *fapi_context;
+    TSS2_RC r = 0;
+
+    uint8_t *signature = NULL;
+    char *quoteInfo = NULL;
+    char *pcrEventLog = NULL;
+    char *certificate = NULL;
+    size_t signatureSize = 0;
+
+    // Get PCR_NUM
+    std::vector<uint8_t>* pcr_num_sub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.pcrs_num_sub");
+    if (pcr_num_sub_vec != nullptr)
+    {
+        do_attestation = true;
+    }
+
+    // Getting attestation data and generating quote
+    if (do_attestation) {
+        // Cast PCR_NUM
+        std::cout << "FIRST CAST" << std::endl;
+        //std::cout << pcr_num_sub_vec.data() << std::endl;
+        std::string pcr_num_sub_str(pcr_num_sub_vec->begin(), pcr_num_sub_vec->end());
+        std::cout << pcr_num_sub_str << std::endl;
+        std::cout << "TEST" << std::endl;
+        // TODO
+        int pcr_num_sub_int = 1;
+
+        // Get PCRS
+        std::vector<uint8_t>* pcrList_sub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.pcrs_sub");
+        if (pcrList_sub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.pcrs_sub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        std::string pcrList_sub_str(pcrList_sub_vec->begin(), pcrList_sub_vec->end());
+
+        // Cast PCRS
+        std::cout << "SECOND CAST" << std::endl;
+        // TODO
+        uint32_t pcr_sub_arr[pcr_num_sub_int];
+        for (int i = 0; i < pcr_num_sub_int; i++) {
+            //int intVal = std::stoi(&pcrList_sub_str[3*i]);
+            int intVal = 15;
+            pcr_sub_arr[i] = intVal;
+        }
+
+        // Get Random
+        std::vector<uint8_t>* randomBytes_sub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.randomBytes_sub");
+        if (randomBytes_sub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.randomBytes_sub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        uint8_t *randomBytes_sub_arr = randomBytes_sub_vec->data();
+
+        std::cout << "After RANDOM" << std::endl;
+
+        std::cout << sig_key_string << std::endl;
+
+        std::cout << "After SIG KEY" << std::endl;
+
+
+
+        // Cast Signatur Key
+        const int length = sig_key_string.length();
+        char* sig_key_arr = new char[length + 1];
+        strcpy(sig_key_arr, sig_key_string.c_str());
+
+        std::cout << "After SIG Cast" << std::endl;
+
+        // Initializing TPM
+        r = Fapi_Initialize(&fapi_context, NULL);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_Initialize failed");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        std::cout << "After INIT" << std::endl;
+
+        // Generate Random
+        r = Fapi_GetRandom(fapi_context, randBytesRequested, &randomBytes_pub);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_GetRandom failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Concat Cert to generated Random
+        uint8_t * concat = new uint8_t[32 + lih->cert_content_->length];
+        std::copy(randomBytes_pub, randomBytes_pub + 32, concat);
+        std::copy(lih->cert_content_->data, lih->cert_content_->data + lih->cert_content_->length, concat + 32);
+
+        // Hash Concat to get new Random
+        if (!EVP_Digest(concat, 32 + lih->cert_content_->length, randomBytes_pub, NULL, EVP_sha256(), NULL))
+        {
+            exception = _SecurityException_("OpenSSL library cannot hash sha256");
+            EMERGENCY_SECURITY_LOGGING("PKIDH", exception.what());
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        
+        // Setting Signing Cert
+        // sig_key_string "HS/SRK/mySignKey"
+        r = Fapi_SetCertificate(fapi_context, sig_key_arr, "-----BEGIN "  \
+            "CERTIFICATE-----[...]-----END CERTIFICATE-----");
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_SetCertificate failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // ESYS
+        /*// Setting up esys context
+        TSS2_TCTI_CONTEXT *tcti;
+        ESYS_CONTEXT *esys;
+
+        // Get Tcti to establish esys context
+        r = Fapi_GetTcti(fapi_context, &tcti);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_GetTcti failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Initialize esys context
+        r = Esys_Initialize(&esys, tcti, NULL);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Esys_Initialize failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        
+        // Reset PCR 16
+        r = Esys_PCR_Reset(esys, 16, ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Esys_PCR_Reset failed");
+            Esys_Finalize(&esys);
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Finalizing esys context
+        Esys_Finalize(&esys);*/
+
+        // Generating Quote
+        r = Fapi_Quote(fapi_context, pcr_sub_arr, pcr_num_sub_int, sig_key_arr,
+                   "TPM-Quote",
+                   randomBytes_sub_arr, randBytesRequested,
+                   &quoteInfo,
+                   &signature, &signatureSize,
+                   &pcrEventLog, &certificate);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_Quote failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        std::cout << "After Quote" << std::endl;
+
+
+        // Finalizing TPM
+        Fapi_Finalize(&fapi_context);
+    }
+
+    std::cout << "TPM Stuff done" << std::endl;
+    
     // Check key agreement algorithm
     std::string s_kagree_algo(kagree_algo->begin(), kagree_algo->end());
     if (strcmp(DH_2048_256, s_kagree_algo.c_str()) != 0 &&
@@ -1641,6 +1943,59 @@ ValidationResult_t PKIDH::begin_handshake_reply(
     bproperty.propagate(true);
     (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
 
+    // Tranfsering Attestation Data
+    if (do_attestation) {
+        // Transfer Random
+        bproperty.name("c.randomBytes_pub");
+        bproperty.value().assign(randomBytes_pub,
+            randomBytes_pub + randBytesRequested);
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer PCRS
+        bproperty.name("c.pcrs_pub");
+        bproperty.value().assign(pcr_list.begin(),
+            pcr_list.end());
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+        bproperty.name("c.pcrs_num_pub");
+        bproperty.value().assign(pcr_num.begin(),
+            pcr_num.end());
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer QuoteInfo
+        std::string quoteInfo_str = std::string((char *)quoteInfo);
+        bproperty.name("c.quoteInfo_pub");
+        bproperty.value().assign(quoteInfo_str.begin(),
+            quoteInfo_str.end());
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer SignatureSize
+        std::string signatureSize_str = std::to_string(signatureSize);
+        bproperty.name("c.signatureSize_pub");
+        bproperty.value().assign(signatureSize_str.begin(),
+            signatureSize_str.end());
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer Signature
+        bproperty.name("c.signature_pub");
+        bproperty.value().assign(signature,
+            signature + signatureSize);
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer PcrEventLog
+        std::string pcrEventLog_str = std::string((char *)pcrEventLog);
+        bproperty.name("c.pcrEventLog_pub");
+        bproperty.value().assign(pcrEventLog_str.begin(),
+            pcrEventLog_str.end());
+        bproperty.propagate(true);
+        (*handshake_handle_aux)->handshake_message_.binary_properties().push_back(std::move(bproperty));
+    }
+
     // hash_c2
     CDRMessage_t message(static_cast<uint32_t>(BinaryPropertyHelper::serialized_size(
                 (*handshake_handle_aux)->handshake_message_.binary_properties())));
@@ -1743,6 +2098,8 @@ ValidationResult_t PKIDH::begin_handshake_reply(
 
     ERR_clear_error();
 
+    std::cout << "end of begin_handshake_reply" << std::endl;
+
     return ValidationResult_t::VALIDATION_FAILED;
 }
 
@@ -1786,6 +2143,7 @@ ValidationResult_t PKIDH::process_handshake_request(
 {
     const PKIIdentityHandle& lih = *handshake_handle->local_identity_handle_;
     PKIIdentityHandle& rih = *handshake_handle->remote_identity_handle_;
+    (*rih)->testtest = "blaaablaaa2";
 
     // Check TokenMessage
     if (handshake_message_in.class_id().compare("DDS:Auth:PKI-DH:1.0+Reply") != 0)
@@ -1942,6 +2300,160 @@ ValidationResult_t PKIDH::process_handshake_request(
     {
         WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.kagree_algo");
         return ValidationResult_t::VALIDATION_FAILED;
+    }
+
+    // ATTESTATION ------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    // Setting up TPM and Quote
+    FAPI_CONTEXT *fapi_context;
+    TSS2_RC r = 0;
+
+    uint8_t *signature_sub = NULL;
+    char *quoteInfo = NULL;
+    char *pcrEventLog = NULL;
+    char *certificate = NULL;
+    size_t signatureSize_sub = 0;
+
+    // Get PCR_NUM
+    std::vector<uint8_t>* pcr_num_pub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.pcrs_num_pub");
+    if (pcr_num_pub_vec != nullptr)
+    {
+        do_attestation = true;
+    }
+
+    // Getting attestation data and generating quote and verifing quote
+    if (do_attestation) {
+        // Cast PCR_NUM
+        std::cout << "THIRD CAST" << std::endl;
+        std::string pcr_num_pub_str(pcr_num_pub_vec->begin(), pcr_num_pub_vec->end());
+        int pcr_num_pub_int = std::stoi(pcr_num_pub_str);
+
+         // Get PCRS
+        std::vector<uint8_t>* pcrList_pub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.pcrs_pub");
+        if (pcrList_pub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.pcrs_pub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        std::string pcrList_pub_str(pcrList_pub_vec->begin(), pcrList_pub_vec->end());
+
+        // Cast PCRS
+        std::cout << "FOURTH CAST" << std::endl;
+        uint32_t pcr_pub_arr[pcr_num_pub_int];
+        for (int i = 0; i < pcr_num_pub_int; i++) {
+            int intVal = std::stoi(&pcrList_pub_str[3*i]);
+            pcr_pub_arr[i] = intVal;
+        }
+
+        // Get QuoteInfo
+        std::vector<uint8_t>* quoteInfo_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.quoteInfo_pub");
+
+        if (quoteInfo_vec == nullptr)
+        {   
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.quoteInfo_pub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        char *quoteInfo_arr = (char*)quoteInfo_vec->data();
+
+        // Get Signature
+        std::vector<uint8_t>* signature_pub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.signature_pub");
+
+        if (signature_pub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.signature_pub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        uint8_t *signature_pub_arr = signature_pub_vec->data();
+
+        // Get SignatureSize
+        std::vector<uint8_t>* signatureSize_pub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.signatureSize_pub");
+        if (signatureSize_pub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.signatureSize_pub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        // Casting SignatureSize
+        uint8_t *signatureSize_pub_arr = signatureSize_pub_vec->data();
+        size_t signatureSize_pub = atoi((const char *)signatureSize_pub_arr);
+
+        // Get PcrEventLog
+        std::vector<uint8_t>* pcrEventLog_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.pcrEventLog_pub");
+        if (pcrEventLog_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.pcrEventLog_pub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        char *pcrEventLog_arr = (char*)pcrEventLog_vec->data();
+
+        // Get Random
+        std::vector<uint8_t>* randomBytes_pub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.randomBytes_pub");
+        if (randomBytes_pub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.randomBytes_pub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        uint8_t *randomBytes_pub_arr = randomBytes_pub_vec->data();
+
+        // Cast Signatur Key
+        const int length = sig_key_string.length();
+        char* sig_key_arr = new char[length + 1];
+        strcpy(sig_key_arr, sig_key_string.c_str());
+
+        // Cast Verification Key
+        const int length2 = verify_key_string.length();
+        char* verify_key_arr = new char[length2 + 1];
+        strcpy(verify_key_arr, verify_key_string.c_str());
+
+        // Initializing TPM
+        r = Fapi_Initialize(&fapi_context, NULL);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_Initialize failed");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // sig_key_string "/ext/myExtPubKey"
+        // Verify Quote
+        r = Fapi_VerifyQuote(fapi_context, verify_key_arr,
+                         randomBytes_sub, randBytesRequested,  quoteInfo_arr,
+                         signature_pub_arr, signatureSize_pub, pcrEventLog_arr);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_VerifyQuote failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Setting Signing Cert
+        r = Fapi_SetCertificate(fapi_context, sig_key_arr, "-----BEGIN "  \
+            "CERTIFICATE-----[...]-----END CERTIFICATE-----");
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_SetCertificate failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Generating Quote
+        r = Fapi_Quote(fapi_context, pcr_pub_arr, pcr_num_pub_int, sig_key_arr,
+                   "TPM-Quote",
+                   randomBytes_pub_arr, randBytesRequested,
+                   &quoteInfo,
+                   &signature_sub, &signatureSize_sub,
+                   &pcrEventLog, &certificate);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_Quote failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Finalize TPM
+        Fapi_Finalize(&fapi_context);
     }
 
     // Check key agreement algorithm
@@ -2127,6 +2639,40 @@ ValidationResult_t PKIDH::process_handshake_request(
 
     BinaryProperty bproperty;
 
+    // Tranfsering Attestation Data
+    if (do_attestation) {
+        // Transfer QuoteInfo
+        std::string quoteInfo_str = std::string((char *)quoteInfo);
+        bproperty.name("c.quoteInfo_sub");
+        bproperty.value().assign(quoteInfo_str.begin(),
+            quoteInfo_str.end());
+        bproperty.propagate(true);
+        final_message.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer SignatureSize
+        std::string signatureSize_str = std::to_string(signatureSize_sub);
+        bproperty.name("c.signatureSize_sub");
+        bproperty.value().assign(signatureSize_str.begin(),
+            signatureSize_str.end());
+        bproperty.propagate(true);
+        final_message.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer Signature
+        bproperty.name("c.signature_sub");
+        bproperty.value().assign(signature_sub,
+            signature_sub + signatureSize_sub);
+        bproperty.propagate(true);
+        final_message.binary_properties().push_back(std::move(bproperty));
+
+        // Transfer PcrEventLog
+        std::string pcrEventLog_str = std::string((char *)pcrEventLog);
+        bproperty.name("c.pcrEventLog_sub");
+        bproperty.value().assign(pcrEventLog_str.begin(),
+            pcrEventLog_str.end());
+        bproperty.propagate(true);
+        final_message.binary_properties().push_back(std::move(bproperty));
+    }
+
     // hash_c1
     bproperty.name("hash_c1");
     bproperty.value(std::move(hash_c1->value()));
@@ -2220,6 +2766,7 @@ ValidationResult_t PKIDH::process_handshake_reply(
         SecurityException& exception)
 {
     PKIIdentityHandle& rih = *handshake_handle->remote_identity_handle_;
+    (*rih)->testtest = "blaaablaaa2";
 
     // Check TokenMessage
     if (handshake_message_in.class_id().compare("DDS:Auth:PKI-DH:1.0+Final") != 0)
@@ -2230,6 +2777,83 @@ ValidationResult_t PKIDH::process_handshake_reply(
     }
 
     // Check incoming handshake.
+
+    // ATTESTATION ------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    //-------------------------------------------------------------------------------------------------------------------------------
+    // Getting attestion data and verifing quote
+    if (do_attestation) {
+        // Get QuoteInfo
+        std::vector<uint8_t>* quoteInfo_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.quoteInfo_sub");
+        if (quoteInfo_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.quoteInfo_sub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        char *quoteInfo_arr = (char*)quoteInfo_vec->data();
+
+        // Get Signature
+        std::vector<uint8_t>* signature_sub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.signature_sub");
+        if (signature_sub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.signature_sub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        uint8_t *signature_sub_arr = signature_sub_vec->data();
+
+        // Get SignatureSize
+        std::vector<uint8_t>* signatureSize_sub_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.signatureSize_sub");
+        if (signatureSize_sub_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.signatureSize_sub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        // Casting SignatureSize
+        uint8_t *signatureSize_sub_arr = signatureSize_sub_vec->data();
+        size_t signatureSize_sub = atoi((const char *)signatureSize_sub_arr);
+
+        // Get PcrEventLog
+        std::vector<uint8_t>* pcrEventLog_vec = DataHolderHelper::find_binary_property_value(handshake_message_in,
+                    "c.pcrEventLog_sub");
+        if (pcrEventLog_vec == nullptr)
+        {
+            WARNING_SECURITY_LOGGING("PKIDH", "Cannot find property c.pcrEventLog_sub");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+        char *pcrEventLog_arr = (char*)pcrEventLog_vec->data();
+
+        // Cast Verification Key
+        const int length2 = verify_key_string.length();
+        char* verify_key_arr = new char[length2 + 1];
+        strcpy(verify_key_arr, verify_key_string.c_str());
+
+        // Setting up TPM
+        FAPI_CONTEXT *fapi_context;
+        TSS2_RC r = 0;
+
+        // Initializing TPM
+        r = Fapi_Initialize(&fapi_context, NULL);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_Initialize failed");
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        r = Fapi_VerifyQuote(fapi_context, verify_key_arr,
+                         randomBytes_pub, randBytesRequested,  quoteInfo_arr,
+                         signature_sub_arr, signatureSize_sub, pcrEventLog_arr);
+        if (r != TSS2_RC_SUCCESS) { 
+            WARNING_SECURITY_LOGGING("PKIDH", "TPM Error: Fapi_VerifyQuote failed");
+            Fapi_Finalize(&fapi_context);
+            return ValidationResult_t::VALIDATION_FAILED;
+        }
+
+        // Finalize TPM
+        Fapi_Finalize(&fapi_context);
+
+    }
 
     // challenge1 (mandatory)
     BinaryProperty* challenge1 = DataHolderHelper::find_binary_property(handshake_message_in, "challenge1");
@@ -2417,6 +3041,8 @@ std::shared_ptr<SecretHandle> PKIDH::get_shared_secret(
         auto secret = get_shared_secret(SharedSecretHandle::nil_handle, exception);
         auto sharedsecret = std::dynamic_pointer_cast<SharedSecretHandle>(secret);
         (*sharedsecret)->data_ = (*handshake->sharedsecret_)->data_;
+        //PKIIdentityHandle& rih = *((PKIHandshakeHandle)handshake_handle)->remote_identity_handle_;
+        //(*rih)->testtest = "blaaablaaa2";
         return secret;
     }
 

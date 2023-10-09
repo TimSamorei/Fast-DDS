@@ -916,6 +916,9 @@ PermissionsHandle* Permissions::validate_remote_permissions(
     const AccessPermissionsHandle& lph = AccessPermissionsHandle::narrow(local_permissions_handle);
     const PKIIdentityHandle& rih = PKIIdentityHandle::narrow(remote_identity_handle);
 
+    std::cout << rih->testtest << std::endl;
+    std::cout << rih->testtest << std::endl;
+
     if (lih.nil() || lph.nil() || rih.nil())
     {
         exception = _SecurityException_("Bad precondition");
@@ -965,6 +968,10 @@ PermissionsHandle* Permissions::validate_remote_permissions(
         return nullptr;
     }
 
+    std::cout << "LOOK HErE" << std::endl;
+    std::cout << lph->grant.pcrs.list << std::endl;
+    std::cout << "LOOK HErE" << std::endl;
+
     Grant remote_grant;
     for (auto grant : data.grants)
     {
@@ -991,6 +998,8 @@ PermissionsHandle* Permissions::validate_remote_permissions(
     (*handle)->governance_rule_ = lph->governance_rule_;
     (*handle)->governance_topic_rules_ = lph->governance_topic_rules_;
 
+
+    //return NULL;
     return handle;
 }
 

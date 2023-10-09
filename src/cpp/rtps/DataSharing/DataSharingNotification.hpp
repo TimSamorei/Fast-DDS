@@ -53,17 +53,10 @@ public:
      */
     inline void notify()
     {
-        try
-        {
-            std::unique_lock<Segment::mutex> lock(notification_->notification_mutex);
-            notification_->new_data.store(true);
-            lock.unlock();
-            notification_->notification_cv.notify_all();
-        }
-        catch (const boost::interprocess::interprocess_exception& /*e*/)
-        {
-            // Timeout when locking
-        }
+        std::unique_lock<Segment::mutex> lock(notification_->notification_mutex);
+        notification_->new_data.store(true);
+        lock.unlock();
+        notification_->notification_cv.notify_all();
     }
 
     /**
@@ -100,7 +93,7 @@ protected:
 
 #pragma warning(push)
 #pragma warning(disable:4324)
-    struct alignas (8) Notification
+    struct alignas (uint64_t) Notification
     {
         //! CV to wait for new notifications
         Segment::condition_variable notification_cv;

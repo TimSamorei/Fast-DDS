@@ -89,6 +89,8 @@ public:
     bool there_are_crls_;
     IdentityToken identity_token_;
     PermissionsCredentialToken permissions_credential_token_;
+
+    std::string testtest;
 };
 
 class PKIDH;

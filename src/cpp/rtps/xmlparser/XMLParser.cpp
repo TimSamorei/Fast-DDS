@@ -19,27 +19,26 @@
 #include <string>
 #include <unordered_map>
 
-#include <tinyxml2.h>
+#include <fastrtps/xmlparser/XMLParserCommon.h>
+#include <fastrtps/xmlparser/XMLTree.h>
+
+#include <fastrtps/transport/UDPv4TransportDescriptor.h>
+#include <fastrtps/transport/UDPv6TransportDescriptor.h>
+#include <fastrtps/transport/TCPv4TransportDescriptor.h>
+#include <fastrtps/transport/TCPv6TransportDescriptor.h>
+#include <fastdds/rtps/transport/shared_mem/SharedMemTransportDescriptor.h>
+
+#include <fastrtps/xmlparser/XMLProfileManager.h>
 
 #include <fastdds/dds/log/FileConsumer.hpp>
 #include <fastdds/dds/log/StdoutConsumer.hpp>
 #include <fastdds/dds/log/StdoutErrConsumer.hpp>
-#include <fastdds/rtps/transport/shared_mem/SharedMemTransportDescriptor.h>
-#include <fastrtps/transport/TCPv4TransportDescriptor.h>
-#include <fastrtps/transport/TCPv6TransportDescriptor.h>
-#include <fastrtps/transport/UDPv4TransportDescriptor.h>
-#include <fastrtps/transport/UDPv6TransportDescriptor.h>
-#include <fastrtps/xmlparser/XMLParserCommon.h>
-#include <fastrtps/xmlparser/XMLProfileManager.h>
-#include <fastrtps/xmlparser/XMLTree.h>
 
-#include <rtps/xmlparser/XMLParserUtils.hpp>
+#include <tinyxml2.h>
 
 namespace eprosima {
 namespace fastrtps {
 namespace xmlparser {
-
-using namespace eprosima::fastdds::xml::detail;
 
 XMLP_ret XMLParser::loadDefaultXMLFile(
         up_base_node_t& root)
@@ -249,6 +248,10 @@ XMLP_ret XMLParser::parseXMLTransportData(
         </xs:complexType>
      */
 
+    XMLP_ret ret = XMLP_ret::XML_OK;
+    std::string sId = "";
+    sp_transport_t pDescriptor = nullptr;
+
     tinyxml2::XMLElement* p_aux0 = nullptr;
     p_aux0 = p_root->FirstChildElement(TRANSPORT_ID);
     if (nullptr == p_aux0)
@@ -256,15 +259,17 @@ XMLP_ret XMLParser::parseXMLTransportData(
         EPROSIMA_LOG_ERROR(XMLPARSER, "Not found '" << TRANSPORT_ID << "' attribute");
         return XMLP_ret::XML_ERROR;
     }
-
-    XMLP_ret ret = XMLP_ret::XML_OK;
-    sp_transport_t pDescriptor = nullptr;
-
-    std::string sId = get_element_text(p_aux0);
-    if (sId.empty())
+    else
     {
-        EPROSIMA_LOG_ERROR(XMLPARSER, "'" << TRANSPORT_ID << "' attribute cannot be empty");
-        return XMLP_ret::XML_ERROR;
+        if (p_aux0->GetText() != nullptr)
+        {
+            sId = p_aux0->GetText();
+        }
+        else
+        {
+            EPROSIMA_LOG_ERROR(XMLPARSER, "'" << TRANSPORT_ID << "' attribute cannot be empty");
+            return XMLP_ret::XML_ERROR;
+        }
     }
 
     p_aux0 = p_root->FirstChildElement(TYPE);
@@ -273,104 +278,111 @@ XMLP_ret XMLParser::parseXMLTransportData(
         EPROSIMA_LOG_ERROR(XMLPARSER, "Not found '" << TYPE << "' attribute");
         return XMLP_ret::XML_ERROR;
     }
-
-    std::string sType = get_element_text(p_aux0);
-    if (sType.empty())
+    else
     {
-        EPROSIMA_LOG_ERROR(XMLPARSER, "'" << TYPE << "' attribute cannot be empty");
-        return XMLP_ret::XML_ERROR;
-    }
-
-    if (sType == UDPv4 || sType == UDPv6)
-    {
-        std::shared_ptr<rtps::UDPTransportDescriptor> pUDPDesc;
-        if (sType == UDPv4)
+        std::string sType;
+        if (p_aux0->GetText() != nullptr)
         {
-            pDescriptor = pUDPDesc = std::make_shared<rtps::UDPv4TransportDescriptor>();
+            sType = p_aux0->GetText();
         }
         else
         {
-            pDescriptor = pUDPDesc = std::make_shared<rtps::UDPv6TransportDescriptor>();
+            EPROSIMA_LOG_ERROR(XMLPARSER, "'" << TYPE << "' attribute cannot be empty");
+            return XMLP_ret::XML_ERROR;
         }
 
-        // Output UDP Socket
-        if (nullptr != (p_aux0 = p_root->FirstChildElement(UDP_OUTPUT_PORT)))
+        if (sType == UDPv4 || sType == UDPv6)
         {
-            int iSocket = 0;
-            if (XMLP_ret::XML_OK != getXMLInt(p_aux0, &iSocket, 0) || iSocket < 0 || iSocket > 65535)
+            if (sType == UDPv4)
             {
-                return XMLP_ret::XML_ERROR;
+                pDescriptor = std::make_shared<rtps::UDPv4TransportDescriptor>();
             }
-            pUDPDesc->m_output_udp_socket = static_cast<uint16_t>(iSocket);
-        }
-        // Non-blocking send
-        if (nullptr != (p_aux0 = p_root->FirstChildElement(NON_BLOCKING_SEND)))
-        {
-            if (XMLP_ret::XML_OK != getXMLBool(p_aux0, &pUDPDesc->non_blocking_send, 0))
+            else
             {
-                return XMLP_ret::XML_ERROR;
+                pDescriptor = std::make_shared<rtps::UDPv6TransportDescriptor>();
             }
-        }
-    }
-    else if (sType == TCPv4)
-    {
-        pDescriptor = std::make_shared<rtps::TCPv4TransportDescriptor>();
-        ret = parseXMLCommonTCPTransportData(p_root, pDescriptor);
-        if (ret != XMLP_ret::XML_OK)
-        {
-            return ret;
-        }
-        else
-        {
-            std::shared_ptr<rtps::TCPv4TransportDescriptor> pTCPv4Desc =
-                    std::dynamic_pointer_cast<rtps::TCPv4TransportDescriptor>(pDescriptor);
 
-            // Wan Address
-            if (nullptr != (p_aux0 = p_root->FirstChildElement(TCP_WAN_ADDR)))
+            std::shared_ptr<rtps::UDPTransportDescriptor> pUDPDesc =
+                    std::dynamic_pointer_cast<rtps::UDPTransportDescriptor>(pDescriptor);
+            // Output UDP Socket
+            if (nullptr != (p_aux0 = p_root->FirstChildElement(UDP_OUTPUT_PORT)))
             {
-                std::string s;
-                if (XMLP_ret::XML_OK != getXMLString(p_aux0, &s, 0))
+                int iSocket = 0;
+                if (XMLP_ret::XML_OK != getXMLInt(p_aux0, &iSocket, 0) || iSocket < 0 || iSocket > 65535)
                 {
                     return XMLP_ret::XML_ERROR;
                 }
-                pTCPv4Desc->set_WAN_address(s);
+                pUDPDesc->m_output_udp_socket = static_cast<uint16_t>(iSocket);
+            }
+            // Non-blocking send
+            if (nullptr != (p_aux0 = p_root->FirstChildElement(NON_BLOCKING_SEND)))
+            {
+                if (XMLP_ret::XML_OK != getXMLBool(p_aux0, &pUDPDesc->non_blocking_send, 0))
+                {
+                    return XMLP_ret::XML_ERROR;
+                }
             }
         }
-    }
-    else if (sType == TCPv6)
-    {
-        pDescriptor = std::make_shared<rtps::TCPv6TransportDescriptor>();
-        ret = parseXMLCommonTCPTransportData(p_root, pDescriptor);
-        if (ret != XMLP_ret::XML_OK)
+        else if (sType == TCPv4)
         {
-            return ret;
-        }
-    }
-    else if (sType == SHM)
-    {
-        pDescriptor = std::make_shared<fastdds::rtps::SharedMemTransportDescriptor>();
-        ret = parseXMLCommonSharedMemTransportData(p_root, pDescriptor);
-        if (ret != XMLP_ret::XML_OK)
-        {
-            return ret;
-        }
-    }
-    else
-    {
-        EPROSIMA_LOG_ERROR(XMLPARSER, "Invalid transport type: '" << sType << "'");
-        return XMLP_ret::XML_ERROR;
-    }
+            pDescriptor = std::make_shared<rtps::TCPv4TransportDescriptor>();
+            ret = parseXMLCommonTCPTransportData(p_root, pDescriptor);
+            if (ret != XMLP_ret::XML_OK)
+            {
+                return ret;
+            }
+            else
+            {
+                std::shared_ptr<rtps::TCPv4TransportDescriptor> pTCPv4Desc =
+                        std::dynamic_pointer_cast<rtps::TCPv4TransportDescriptor>(pDescriptor);
 
-    if (sType != SHM)
-    {
-        ret = parseXMLCommonTransportData(p_root, pDescriptor);
-        if (ret != XMLP_ret::XML_OK)
-        {
-            return ret;
+                // Wan Address
+                if (nullptr != (p_aux0 = p_root->FirstChildElement(TCP_WAN_ADDR)))
+                {
+                    std::string s;
+                    if (XMLP_ret::XML_OK != getXMLString(p_aux0, &s, 0))
+                    {
+                        return XMLP_ret::XML_ERROR;
+                    }
+                    pTCPv4Desc->set_WAN_address(s);
+                }
+            }
         }
-    }
+        else if (sType == TCPv6)
+        {
+            pDescriptor = std::make_shared<rtps::TCPv6TransportDescriptor>();
+            ret = parseXMLCommonTCPTransportData(p_root, pDescriptor);
+            if (ret != XMLP_ret::XML_OK)
+            {
+                return ret;
+            }
+        }
+        else if (sType == SHM)
+        {
+            pDescriptor = std::make_shared<fastdds::rtps::SharedMemTransportDescriptor>();
+            ret = parseXMLCommonSharedMemTransportData(p_root, pDescriptor);
+            if (ret != XMLP_ret::XML_OK)
+            {
+                return ret;
+            }
+        }
+        else
+        {
+            EPROSIMA_LOG_ERROR(XMLPARSER, "Invalid transport type: '" << sType << "'");
+            return XMLP_ret::XML_ERROR;
+        }
 
-    XMLProfileManager::insertTransportById(sId, pDescriptor);
+        if (sType != SHM)
+        {
+            ret = parseXMLCommonTransportData(p_root, pDescriptor);
+            if (ret != XMLP_ret::XML_OK)
+            {
+                return ret;
+            }
+        }
+
+        XMLProfileManager::insertTransportById(sId, pDescriptor);
+    }
     return ret;
 }
 
@@ -470,8 +482,8 @@ XMLP_ret XMLParser::parseXMLCommonTransportData(
                 address = p_aux1->Name();
                 if (strcmp(address, ADDRESS) == 0)
                 {
-                    std::string text = get_element_text(p_aux1);
-                    if (!text.empty())
+                    const char* text = p_aux1->GetText();
+                    if (nullptr != text)
                     {
                         pDesc->interfaceWhiteList.emplace_back(text);
                     }
@@ -1378,28 +1390,23 @@ XMLP_ret XMLParser::parseLogConfig(
         tinyxml2::XMLElement* p_root)
 {
     /*
-        <xs:element name="log" type="logType"/>
-        <xs:complexType name="logType">
-            <xs:sequence minOccurs="1" maxOccurs="unbounded">
-                <xs:choice minOccurs="1">
-                    <xs:element name="use_default" type="booleanCaps" minOccurs="0" maxOccurs="1"/>
-                    <xs:element name="consumer" type="logConsumerType" minOccurs="0" maxOccurs="unbounded"/>
-                </xs:choice>
-            </xs:sequence>
-        </xs:complexType>
-     */
-
-    /*
-     * TODO(eduponz): Uphold XSD validation in parsing
-     *   Even though the XSD above enforces the log tag to have at least one consumer,
-     *   the parsing allows for an empty log tag (e.g. `<log></log>`).
-     *   This inconsistency is kept to keep a backwards compatible behaviour.
-     *   In fact, test XMLParserTests.parseXMLNoRoot even checks that an empty log tag
-     *   is valid.
+       <xs:element name="log">
+       <xs:complexType>
+        <xs:boolean name="use_default"/>
+        <xs:sequence>
+          <xs:element maxOccurs="consumer">
+            <xs:complexType>
+              <xs:element name="class" type="string" minOccurs="1" maxOccurs="1"/>
+              <xs:sequence>
+                <xs:element name="propertyType"/>
+              </xs:sequence>
+            </xs:complexType>
+        </xs:sequence>
+       </xs:complexType>
+       </xs:element>
      */
 
     XMLP_ret ret = XMLP_ret::XML_OK;
-
     tinyxml2::XMLElement* p_aux0 = p_root->FirstChildElement(LOG);
     if (p_aux0 == nullptr)
     {
@@ -1407,37 +1414,31 @@ XMLP_ret XMLParser::parseLogConfig(
     }
 
     tinyxml2::XMLElement* p_element = p_aux0->FirstChildElement();
-
-    while (ret == XMLP_ret::XML_OK && nullptr != p_element)
+    const char* tag = nullptr;
+    while (nullptr != p_element)
     {
-        const char* tag = p_element->Value();
-        if (nullptr != tag)
+        if (nullptr != (tag = p_element->Value()))
         {
             if (strcmp(tag, USE_DEFAULT) == 0)
             {
-                std::string auxBool = get_element_text(p_element);
-                if (auxBool.empty())
+                bool use_default = true;
+                std::string auxBool = p_element->GetText();
+                if (std::strcmp(auxBool.c_str(), "FALSE") == 0)
                 {
-                    EPROSIMA_LOG_ERROR(XMLPARSER, "Cannot get text from tag: '" << tag << "'");
-                    ret = XMLP_ret::XML_ERROR;
+                    use_default = false;
                 }
-
-                if (ret == XMLP_ret::XML_OK)
+                if (!use_default)
                 {
-                    bool use_default = true;
-                    if (std::strcmp(auxBool.c_str(), "FALSE") == 0)
-                    {
-                        use_default = false;
-                    }
-                    if (!use_default)
-                    {
-                        eprosima::fastdds::dds::Log::ClearConsumers();
-                    }
+                    eprosima::fastdds::dds::Log::ClearConsumers();
                 }
             }
             else if (strcmp(tag, CONSUMER) == 0)
             {
                 ret = parseXMLConsumer(*p_element);
+                if (ret == XMLP_ret::XML_ERROR)
+                {
+                    return ret;
+                }
             }
             else
             {
@@ -1445,13 +1446,8 @@ XMLP_ret XMLParser::parseLogConfig(
                 ret = XMLP_ret::XML_ERROR;
             }
         }
-
-        if (ret == XMLP_ret::XML_OK)
-        {
-            p_element = p_element->NextSiblingElement(CONSUMER);
-        }
+        p_element = p_element->NextSiblingElement(CONSUMER);
     }
-
     return ret;
 }
 
@@ -1465,7 +1461,7 @@ XMLP_ret XMLParser::parseXMLConsumer(
 
     if (p_element != nullptr)
     {
-        std::string classStr = get_element_text(p_element);
+        std::string classStr = p_element->GetText();
 
         if (std::strcmp(classStr.c_str(), "StdoutConsumer") == 0)
         {
@@ -1499,7 +1495,7 @@ XMLP_ret XMLParser::parseXMLConsumer(
                     if (nullptr != (p_auxName = property->FirstChildElement(NAME)))
                     {
                         // Get property name
-                        std::string s = get_element_text(p_auxName);
+                        std::string s = p_auxName->GetText();
 
                         if (std::strcmp(s.c_str(), "stderr_threshold") == 0)
                         {
@@ -1522,7 +1518,7 @@ XMLP_ret XMLParser::parseXMLConsumer(
                             if (nullptr != (p_auxValue = property->FirstChildElement(VALUE)))
                             {
                                 // Get property value and use it to set the threshold.
-                                std::string threshold_str = get_element_text(p_auxValue);
+                                std::string threshold_str = p_auxValue->GetText();
                                 if (std::strcmp(threshold_str.c_str(), "Log::Kind::Error") == 0)
                                 {
                                     threshold = Log::Kind::Error;
@@ -1579,12 +1575,16 @@ XMLP_ret XMLParser::parseXMLConsumer(
                     // name - stringType
                     if (nullptr != (p_auxName = property->FirstChildElement(NAME)))
                     {
-                        std::string s = get_element_text(p_auxName);
+                        std::string s = p_auxName->GetText();
 
                         if (std::strcmp(s.c_str(), "filename") == 0)
                         {
-                            if (nullptr == (p_auxValue = property->FirstChildElement(VALUE)) ||
-                                    !get_element_text(p_auxValue, outputFile))
+                            if (nullptr != (p_auxValue = property->FirstChildElement(VALUE)) &&
+                                    nullptr != p_auxValue->GetText())
+                            {
+                                outputFile = p_auxValue->GetText();
+                            }
+                            else
                             {
                                 EPROSIMA_LOG_ERROR(XMLParser, "Filename value cannot be found for " << classStr
                                                                                                     << " log consumer.");
@@ -1593,10 +1593,10 @@ XMLP_ret XMLParser::parseXMLConsumer(
                         }
                         else if (std::strcmp(s.c_str(), "append") == 0)
                         {
-                            std::string auxBool;
                             if (nullptr != (p_auxValue = property->FirstChildElement(VALUE)) &&
-                                    get_element_text(p_auxValue, auxBool))
+                                    nullptr != p_auxValue->GetText())
                             {
+                                std::string auxBool = p_auxValue->GetText();
                                 if (std::strcmp(auxBool.c_str(), "TRUE") == 0)
                                 {
                                     append = true;
@@ -1755,64 +1755,39 @@ XMLP_ret XMLParser::fillDataNode(
     addAllAttributes(p_profile, participant_node);
 
     uint8_t ident = 1;
-    tinyxml2::XMLElement* p_element;
+    tinyxml2::XMLElement* p_element = p_profile->FirstChildElement(DOMAIN_ID);
+    if (nullptr != p_element)
+    {
+        // domainId - uint32Type
+        if (XMLP_ret::XML_OK != getXMLUint(p_element, &participant_node.get()->domainId, ident))
+        {
+            return XMLP_ret::XML_ERROR;
+        }
+    }
+
+    p_element = p_profile->FirstChildElement(RTPS);
+    if (nullptr == p_element)
+    {
+        EPROSIMA_LOG_ERROR(XMLPARSER, "Not found '" << RTPS << "' tag");
+        return XMLP_ret::XML_ERROR;
+    }
+
     tinyxml2::XMLElement* p_aux0 = nullptr;
     const char* name = nullptr;
-    std::set<std::string> tags_present;
 
-    /*
-     * The only allowed elements are <domainId> and <rtps>
-     *   - The min occurrences of <domainId> are 0, and its max is 1; look for it.
-     *   - The min occurrences of <rtps> are 0, and its max is 1; look for it.
-     */
-    for (p_element = p_profile->FirstChildElement(); p_element != nullptr; p_element = p_element->NextSiblingElement())
-    {
-        name = p_element->Name();
-        if (tags_present.count(name) != 0)
-        {
-            EPROSIMA_LOG_ERROR(XMLPARSER, "Duplicated element found in 'participant'. Tag: " << name);
-            return XMLP_ret::XML_ERROR;
-        }
-        tags_present.emplace(name);
+    std::unordered_map<std::string, bool> tags_present;
 
-        if (strcmp(p_element->Name(), DOMAIN_ID) == 0)
-        {
-            // domainId - uint32Type
-            if (XMLP_ret::XML_OK != getXMLUint(p_element, &participant_node.get()->domainId, ident))
-            {
-                return XMLP_ret::XML_ERROR;
-            }
-        }
-        else if (strcmp(p_element->Name(), RTPS) == 0)
-        {
-            p_aux0 = p_element;
-        }
-        else
-        {
-            EPROSIMA_LOG_ERROR(XMLPARSER, "Found incorrect tag '" << p_element->Name() << "'");
-            return XMLP_ret::XML_ERROR;
-        }
-    }
-    tags_present.clear();
-
-    // <rtps> is not present, but that's OK
-    if (nullptr == p_aux0)
-    {
-        return XMLP_ret::XML_OK;
-    }
-
-    // Check contents of <rtps>
-    for (p_aux0 = p_aux0->FirstChildElement(); p_aux0 != nullptr; p_aux0 = p_aux0->NextSiblingElement())
+    for (p_aux0 = p_element->FirstChildElement(); p_aux0 != nullptr; p_aux0 = p_aux0->NextSiblingElement())
     {
         name = p_aux0->Name();
 
-        if (tags_present.count(name) != 0)
+        if (tags_present[name])
         {
             EPROSIMA_LOG_ERROR(XMLPARSER,
-                    "Duplicated element found in 'rtpsParticipantAttributesType'. Tag: " << name);
+                    "Duplicated element found in 'rtpsParticipantAttributesType'. Name: " << name);
             return XMLP_ret::XML_ERROR;
         }
-        tags_present.emplace(name);
+        tags_present[name] = true;
 
         if (strcmp(name, ALLOCATION) == 0)
         {

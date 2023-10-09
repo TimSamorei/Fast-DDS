@@ -16,69 +16,64 @@
  * @file TypesBase.cpp
  */
 
-#include <fastcdr/Cdr.h>
-#include <fastcdr/CdrSizeCalculator.hpp>
 #include <fastrtps/types/TypesBase.h>
+#include <fastcdr/Cdr.h>
 
 namespace eprosima {
-namespace fastcdr {
-template<>
-size_t calculate_serialized_size(
-        eprosima::fastcdr::CdrSizeCalculator&,
-        const eprosima::fastrtps::types::MemberFlag&,
-        size_t& current_alignment)
+namespace fastrtps {
+
+using namespace rtps;
+
+namespace types {
+
+void MemberFlag::serialize(
+        eprosima::fastcdr::Cdr& cdr) const
 {
-    size_t calculated_size {2 + eprosima::fastcdr::Cdr::alignment(current_alignment, 2)};
-    current_alignment += calculated_size;
-    return calculated_size;
+    //cdr << m_MemberFlag;
+    uint16_t bits = static_cast<uint16_t>(m_MemberFlag.to_ulong());
+    cdr << bits;
 }
 
-template<>
-void serialize(
-        eprosima::fastcdr::Cdr& cdr,
-        const eprosima::fastrtps::types::MemberFlag& data)
+void MemberFlag::deserialize(
+        eprosima::fastcdr::Cdr& cdr)
 {
-    cdr << data.bitset();
+    //cdr >> (uint16_t)m_MemberFlag;
+    uint16_t bits;
+    cdr >> bits;
+    m_MemberFlag = std::bitset<16>(bits);
 }
 
-template<>
-void deserialize(
-        eprosima::fastcdr::Cdr& cdr,
-        eprosima::fastrtps::types::MemberFlag& data)
+size_t MemberFlag::getCdrSerializedSize(
+        const MemberFlag&,
+        size_t current_alignment)
 {
-    std::bitset<16> bitset;
-    cdr >> bitset;
-    data.bitset(bitset);
+    return 2 + eprosima::fastcdr::Cdr::alignment(current_alignment, 2);
 }
 
-template<>
-size_t calculate_serialized_size(
-        eprosima::fastcdr::CdrSizeCalculator&,
-        const eprosima::fastrtps::types::TypeFlag&,
-        size_t& current_alignment)
+void TypeFlag::serialize(
+        eprosima::fastcdr::Cdr& cdr) const
 {
-    size_t calculated_size {2 + eprosima::fastcdr::Cdr::alignment(current_alignment, 2)};
-    current_alignment += calculated_size;
-    return calculated_size;
+    //cdr << m_TypeFlag;
+    uint16_t bits = static_cast<uint16_t>(m_TypeFlag.to_ulong());
+    cdr << bits;
 }
 
-template<>
-void serialize(
-        eprosima::fastcdr::Cdr& cdr,
-        const eprosima::fastrtps::types::TypeFlag& data)
+void TypeFlag::deserialize(
+        eprosima::fastcdr::Cdr& cdr)
 {
-    cdr << data.bitset();
+    //cdr >> (uint16_t)m_TypeFlag;
+    uint16_t bits;
+    cdr >> bits;
+    m_TypeFlag = std::bitset<16>(bits);
 }
 
-template<>
-void deserialize(
-        eprosima::fastcdr::Cdr& cdr,
-        eprosima::fastrtps::types::TypeFlag& data)
+size_t TypeFlag::getCdrSerializedSize(
+        const TypeFlag&,
+        size_t current_alignment)
 {
-    std::bitset<16> bitset;
-    cdr >> bitset;
-    data.bitset(bitset);
+    return 2 + eprosima::fastcdr::Cdr::alignment(current_alignment, 2);
 }
 
-} // namespace fastcdr
+} // namespace types
+} // namespace fastrtps
 } // namespace eprosima

@@ -50,6 +50,7 @@ static const char* Partition_str = "partition";
 static const char* DataTags_str = "data_tags";
 static const char* Allow_str = "ALLOW";
 static const char* Deny_str = "DENY";
+static const char* PCR_str = "pcrs";
 
 using namespace eprosima::fastrtps::rtps::security;
 
@@ -218,6 +219,32 @@ bool PermissionsParser::parse_grant(
         EPROSIMA_LOG_ERROR(XMLPARSER, "Expected " << Validity_str << " tag. Line " << PRINTLINE(old_node));
         return false;
     }
+
+    ///TESTING
+    old_node = node;
+    node = node->NextSiblingElement();
+
+    if (node != nullptr)
+    {
+        if (strcmp(node->Name(), PCR_str) == 0)
+        {
+            if (!parse_pcrs(node, grant.pcrs))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            EPROSIMA_LOG_ERROR(XMLPARSER, "Expected " << PCR_str << " tag. Line " << PRINTLINE(node));
+            return false;
+        }
+    }
+    else
+    {
+        EPROSIMA_LOG_ERROR(XMLPARSER, "Expected " << PCR_str << " tag. Line " << PRINTLINE(old_node));
+        return false;
+    }
+    ///TESTING
 
     old_node = node;
     node = node->NextSiblingElement();
@@ -397,6 +424,30 @@ bool PermissionsParser::parse_validity(
 
     return returned_value;
 }
+
+//TESTING
+bool PermissionsParser::parse_pcrs(
+        tinyxml2::XMLElement* root,
+        Pcrs& pcrs
+        )
+{
+    assert(root);
+
+    bool returned_value = false;
+
+    if (root != nullptr)
+    {
+        pcrs.list = root->GetText();
+        returned_value = true;
+    }
+    else
+    {
+        EPROSIMA_LOG_ERROR(XMLPARSER, "Expected " << PCR_str << " tag. Line " << PRINTLINEPLUSONE(root));
+    }
+
+    return returned_value;
+}
+//TESTING
 
 bool PermissionsParser::parse_rule(
         tinyxml2::XMLElement* root,

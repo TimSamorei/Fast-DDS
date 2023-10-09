@@ -146,8 +146,7 @@ DataWriterImpl::DataWriterImpl(
         TypeSupport type,
         Topic* topic,
         const DataWriterQos& qos,
-        DataWriterListener* listen,
-        std::shared_ptr<fastrtps::rtps::IPayloadPool> payload_pool)
+        DataWriterListener* listen)
     : publisher_(p)
     , type_(type)
     , topic_(topic)
@@ -175,12 +174,6 @@ DataWriterImpl::DataWriterImpl(
     fastrtps::rtps::RTPSParticipantImpl::preprocess_endpoint_attributes<WRITER, 0x03, 0x02>(
         EntityId_t::unknown(), publisher_->get_participant_impl()->id_counter(), endpoint_attributes, guid_.entityId);
     guid_.guidPrefix = publisher_->get_participant_impl()->guid().guidPrefix;
-
-    if (payload_pool != nullptr)
-    {
-        is_custom_payload_pool_ = true;
-        payload_pool_ = payload_pool;
-    }
 }
 
 DataWriterImpl::DataWriterImpl(
@@ -454,10 +447,6 @@ ReturnCode_t DataWriterImpl::loan_sample(
         void*& sample,
         LoanInitializationKind initialization)
 {
-    // Block lowlevel writer
-    auto max_blocking_time = steady_clock::now() +
-            microseconds(::TimeConv::Time_t2MicroSecondsInt64(qos_.reliability().max_blocking_time));
-
     // Type should be plain and have space for the representation header
     if (!type_->is_plain() || SerializedPayload_t::representation_header_size > type_->m_typeSize)
     {
@@ -470,16 +459,7 @@ ReturnCode_t DataWriterImpl::loan_sample(
         return ReturnCode_t::RETCODE_NOT_ENABLED;
     }
 
-#if HAVE_STRICT_REALTIME
-    std::unique_lock<RecursiveTimedMutex> lock(writer_->getMutex(), std::defer_lock);
-    if (!lock.try_lock_until(max_blocking_time))
-    {
-        return ReturnCode_t::RETCODE_TIMEOUT;
-    }
-#else
-    static_cast<void>(max_blocking_time);
     std::lock_guard<RecursiveTimedMutex> lock(writer_->getMutex());
-#endif // if HAVE_STRICT_REALTIME
 
     // Get one payload from the pool
     PayloadInfo_t payload;
@@ -1143,22 +1123,10 @@ ReturnCode_t DataWriterImpl::set_qos(
     {
         return ReturnCode_t::RETCODE_IMMUTABLE_POLICY;
     }
-
-    set_qos(qos_, qos_to_set, enabled);
+    set_qos(qos_, qos_to_set, !enabled);
 
     if (enabled)
     {
-        if (qos_.reliability().kind == eprosima::fastrtps::RELIABLE_RELIABILITY_QOS &&
-                qos_.reliable_writer_qos() == qos_to_set.reliable_writer_qos())
-        {
-            // Update times and positive_acks attributes on RTPS Layer
-            WriterAttributes w_att;
-            w_att.times = qos_.reliable_writer_qos().times;
-            w_att.disable_positive_acks = qos_.reliable_writer_qos().disable_positive_acks.enabled;
-            w_att.keep_duration = qos_.reliable_writer_qos().disable_positive_acks.duration;
-            writer_->updateAttributes(w_att);
-        }
-
         //Notify the participant that a Writer has changed its QOS
         fastrtps::TopicAttributes topic_att = get_topic_attributes(qos_, *topic_, type_);
         WriterQos wqos = qos_.get_writerqos(get_publisher()->get_qos(), topic_->get_qos());
@@ -1896,13 +1864,6 @@ bool DataWriterImpl::can_qos_be_updated(
         EPROSIMA_LOG_WARNING(RTPS_QOS_CHECK,
                 "Data sharing configuration cannot be changed after the creation of a DataWriter.");
     }
-    if (to.reliable_writer_qos().disable_positive_acks.enabled !=
-            from.reliable_writer_qos().disable_positive_acks.enabled)
-    {
-        updatable = false;
-        EPROSIMA_LOG_WARNING(RTPS_QOS_CHECK,
-                "Only the period of Positive ACKs can be changed after the creation of a DataWriter.");
-    }
     return updatable;
 }
 
@@ -1978,7 +1939,7 @@ bool DataWriterImpl::release_payload_pool()
 
     bool result = true;
 
-    if (is_data_sharing_compatible_ || is_custom_payload_pool_)
+    if (is_data_sharing_compatible_)
     {
         // No-op
     }
@@ -2033,11 +1994,6 @@ ReturnCode_t DataWriterImpl::check_datasharing_compatible(
             return ReturnCode_t::RETCODE_OK;
             break;
         case DataSharingKind::ON:
-            if (is_custom_payload_pool_)
-            {
-                EPROSIMA_LOG_ERROR(DATA_WRITER, "Custom payload pool detected. Cannot force Data sharing usage.");
-                return ReturnCode_t::RETCODE_INCONSISTENT_POLICY;
-            }
 #if HAVE_SECURITY
             if (has_security_enabled)
             {
@@ -2063,11 +2019,6 @@ ReturnCode_t DataWriterImpl::check_datasharing_compatible(
             return ReturnCode_t::RETCODE_OK;
             break;
         case DataSharingKind::AUTO:
-            if (is_custom_payload_pool_)
-            {
-                EPROSIMA_LOG_INFO(DATA_WRITER, "Custom payload pool detected. Data Sharing disabled.");
-                return ReturnCode_t::RETCODE_OK;
-            }
 #if HAVE_SECURITY
             if (has_security_enabled)
             {

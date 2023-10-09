@@ -57,6 +57,13 @@ public:
     PKIIdentityHandle* remote_identity_handle_ = { nullptr };
     HandshakeMessageToken handshake_message_;
     std::shared_ptr<SharedSecretHandle> sharedsecret_;
+
+    //ATTESTATION
+    std::string randomBytes_sub_;
+    std::string randomBytes_pub_;
+    std::string pcrs_sub_;
+    std::string pcrs_pub_;
+    std::string signature_pub_;
 };
 
 class PKIDH;

@@ -59,6 +59,17 @@ bool HelloWorldSubscriber::init()
     pqos.properties().properties().emplace_back("dds.sec.crypto.plugin",
             "builtin.AES-GCM-GMAC");
 
+    pqos.properties().properties().emplace_back("dds.sec.auth.plugin",
+            "builtin.TC-RA");
+    pqos.properties().properties().emplace_back("dds.sec.auth.builtin.TC-RA.sig_key",
+            "HS/SRK/mySignKey");
+    pqos.properties().properties().emplace_back("dds.sec.auth.builtin.TC-RA.verify_key",
+            "/ext/myExtPubKey");
+    pqos.properties().properties().emplace_back("dds.sec.auth.builtin.TC-RA.pcr_list",
+            "16");
+    pqos.properties().properties().emplace_back("dds.sec.auth.builtin.TC-RA.pcr_num",
+            "1");
+
     participant_ = DomainParticipantFactory::get_instance()->create_participant(0, pqos);
 
     if (participant_ == nullptr)

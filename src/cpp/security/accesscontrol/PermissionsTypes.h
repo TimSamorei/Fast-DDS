@@ -54,6 +54,11 @@ struct Validity
     std::time_t not_after;
 };
 
+struct Pcrs
+{
+    std::string list;
+};
+
 struct Grant
 {
     std::string name;
@@ -61,6 +66,7 @@ struct Grant
     Validity validity;
     std::vector<Rule> rules;
     bool is_default_allow;
+    Pcrs pcrs;
 };
 
 }

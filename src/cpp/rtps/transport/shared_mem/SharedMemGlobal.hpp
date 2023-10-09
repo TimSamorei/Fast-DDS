@@ -670,19 +670,12 @@ public:
         void close_listener(
                 std::atomic<bool>* is_listener_closed)
         {
-            try
             {
-                {
-                    std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
-                    is_listener_closed->exchange(true);
-                }
-                node_->empty_cv.notify_all();
-            }
-            catch (const boost::interprocess::interprocess_exception& /*e*/)
-            {
-                // Timeout when locking
+                std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
+                is_listener_closed->exchange(true);
             }
 
+            node_->empty_cv.notify_all();
         }
 
         /**
@@ -789,25 +782,17 @@ public:
         bool get_and_remove_blocked_processing(
                 BufferDescriptor& buffer_descriptor)
         {
-            try
+            std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
+            for (uint32_t i = 0; i < PortNode::LISTENERS_STATUS_SIZE; i++)
             {
-                std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
-                for (uint32_t i = 0; i < PortNode::LISTENERS_STATUS_SIZE; i++)
+                if (node_->listeners_status[i].is_in_use &&
+                        node_->listeners_status[i].is_processing)
                 {
-                    if (node_->listeners_status[i].is_in_use &&
-                            node_->listeners_status[i].is_processing)
-                    {
-                        buffer_descriptor = node_->listeners_status[i].descriptor;
-                        listener_processing_stop(i);
-                        return true;
-                    }
+                    buffer_descriptor = node_->listeners_status[i].descriptor;
+                    listener_processing_stop(i);
+                    return true;
                 }
             }
-            catch (const boost::interprocess::interprocess_exception& /*e*/)
-            {
-                // Timeout when locking
-            }
-
             return false;
         }
 
@@ -820,17 +805,10 @@ public:
                 uint32_t listener_index,
                 const BufferDescriptor& buffer_descriptor)
         {
-            try
-            {
-                std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
+            std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
 
-                node_->listeners_status[listener_index].descriptor = buffer_descriptor;
-                node_->listeners_status[listener_index].is_processing = true;
-            }
-            catch (const boost::interprocess::interprocess_exception& /*e*/)
-            {
-                // Timeout when locking
-            }
+            node_->listeners_status[listener_index].descriptor = buffer_descriptor;
+            node_->listeners_status[listener_index].is_processing = true;
         }
 
         /**
@@ -840,16 +818,9 @@ public:
         void listener_processing_stop(
                 uint32_t listener_index)
         {
-            try
-            {
-                std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
+            std::lock_guard<SharedMemSegment::mutex> lock(node_->empty_cv_mutex);
 
-                node_->listeners_status[listener_index].is_processing = false;
-            }
-            catch (const boost::interprocess::interprocess_exception& /*e*/)
-            {
-                // Timeout when locking
-            }
+            node_->listeners_status[listener_index].is_processing = false;
         }
 
         /**

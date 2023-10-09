@@ -240,6 +240,12 @@ public:
         return (uint32_t)m_att.participantID;
     }
 
+    //!Post to the resource semaphore
+    void ResourceSemaphorePost();
+
+    //!Wait for the resource semaphore
+    void ResourceSemaphoreWait();
+
     //!Get Pointer to the Event Resource.
     ResourceEvent& getEventResource()
     {
@@ -470,8 +476,7 @@ public:
         return false;
     }
 
-    std::unique_ptr<RTPSMessageGroup_t> get_send_buffer(
-            const std::chrono::steady_clock::time_point& max_blocking_time);
+    std::unique_ptr<RTPSMessageGroup_t> get_send_buffer();
     void return_send_buffer(
             std::unique_ptr <RTPSMessageGroup_t>&& buffer);
 
@@ -524,6 +529,8 @@ private:
     ResourceEvent mp_event_thr;
     //! BuiltinProtocols of this RTPSParticipant
     BuiltinProtocols* mp_builtinProtocols;
+    //!Semaphore to wait for the listen thread creation.
+    Semaphore* mp_ResourceSemaphore;
     //!Id counter to correctly assign the ids to writers and readers.
     std::atomic<uint32_t> IdCounter;
     //! Mutex to safely access endpoints collections

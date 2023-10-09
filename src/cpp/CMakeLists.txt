@@ -491,8 +491,9 @@ else()
     set(PRIVACY "PUBLIC")
 endif()
 
+find_package(json-c CONFIG REQUIRED)
 # Link library to external libraries.
-target_link_libraries(${PROJECT_NAME} ${PRIVACY} fastcdr foonathan_memory
+target_link_libraries(${PROJECT_NAME} ${PRIVACY} fastcdr foonathan_memory tss2-fapi json-c::json-c tss2-esys
     ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS}
     ${TINYXML2_LIBRARY}
     $<$<BOOL:${LINK_SSL}>:OpenSSL::SSL$<SEMICOLON>OpenSSL::Crypto$<$<BOOL:${WIN32}>:$<SEMICOLON>crypt32.lib>>
